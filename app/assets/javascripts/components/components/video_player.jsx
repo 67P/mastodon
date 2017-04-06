@@ -2,6 +2,7 @@ import ImmutablePropTypes from 'react-immutable-proptypes';
 import PureRenderMixin from 'react-addons-pure-render-mixin';
 import IconButton from './icon_button';
 import { defineMessages, injectIntl, FormattedMessage } from 'react-intl';
+import { isIOS } from '../is_mobile';
 
 const messages = defineMessages({
   toggle_sound: { id: 'video_player.toggle_sound', defaultMessage: 'Toggle sound' },
@@ -22,14 +23,14 @@ const muteStyle = {
   position: 'absolute',
   top: '10px',
   right: '10px',
+  color: 'white',
+  textShadow: "0px 1px 1px black, 1px 0px 1px black",
   opacity: '0.8',
   zIndex: '5'
 };
 
 const spoilerStyle = {
   marginTop: '8px',
-  background: '#000',
-  color: '#fff',
   textAlign: 'center',
   height: '100%',
   cursor: 'pointer',
@@ -55,6 +56,8 @@ const spoilerButtonStyle = {
   position: 'absolute',
   top: '6px',
   left: '8px',
+  color: 'white',
+  textShadow: "0px 1px 1px black, 1px 0px 1px black",
   zIndex: '100'
 };
 
@@ -63,12 +66,14 @@ const VideoPlayer = React.createClass({
     media: ImmutablePropTypes.map.isRequired,
     width: React.PropTypes.number,
     height: React.PropTypes.number,
-    sensitive: React.PropTypes.bool
+    sensitive: React.PropTypes.bool,
+    intl: React.PropTypes.object.isRequired,
+    autoplay: React.PropTypes.bool
   },
 
   getDefaultProps () {
     return {
-      width: 196,
+      width: 239,
       height: 110
     };
   },
@@ -77,7 +82,8 @@ const VideoPlayer = React.createClass({
     return {
       visible: !this.props.sensitive,
       preview: true,
-      muted: true
+      muted: true,
+      hasAudio: true
     };
   },
 
@@ -110,8 +116,42 @@ const VideoPlayer = React.createClass({
     });
   },
 
+  setRef (c) {
+    this.video = c;
+  },
+
+  handleLoadedData () {
+    if (('WebkitAppearance' in document.documentElement.style && this.video.audioTracks.length === 0) || this.video.mozHasAudio === false) {
+      this.setState({ hasAudio: false });
+    }
+  },
+
+  componentDidMount () {
+    if (!this.video) {
+      return;
+    }
+
+    this.video.addEventListener('loadeddata', this.handleLoadedData);
+  },
+
+  componentDidUpdate () {
+    if (!this.video) {
+      return;
+    }
+
+    this.video.addEventListener('loadeddata', this.handleLoadedData);
+  },
+
+  componentWillUnmount () {
+    if (!this.video) {
+      return;
+    }
+
+    this.video.removeEventListener('loadeddata', this.handleLoadedData);
+  },
+
   render () {
-    const { media, intl, width, height, sensitive } = this.props;
+    const { media, intl, width, height, sensitive, autoplay } = this.props;
 
     let spoilerButton = (
       <div style={spoilerButtonStyle} >
@@ -119,10 +159,20 @@ const VideoPlayer = React.createClass({
       </div>
     );
 
+    let muteButton = '';
+
+    if (this.state.hasAudio) {
+      muteButton = (
+        <div style={muteStyle}>
+          <IconButton title={intl.formatMessage(messages.toggle_sound)} icon={this.state.muted ? 'volume-off' : 'volume-up'} onClick={this.handleClick} />
+        </div>
+      );
+    }
+
     if (!this.state.visible) {
       if (sensitive) {
         return (
-          <div style={{...spoilerStyle, width: `${width}px`, height: `${height}px` }} onClick={this.handleVisibility}>
+          <div style={{...spoilerStyle, width: `${width}px`, height: `${height}px` }} className='media-spoiler' onClick={this.handleVisibility}>
             {spoilerButton}
             <span style={spoilerSpanStyle}><FormattedMessage id='status.sensitive_warning' defaultMessage='Sensitive content' /></span>
             <span style={spoilerSubSpanStyle}><FormattedMessage id='status.sensitive_toggle' defaultMessage='Click to view' /></span>
@@ -130,7 +180,7 @@ const VideoPlayer = React.createClass({
         );
       } else {
         return (
-          <div style={{...spoilerStyle, width: `${width}px`, height: `${height}px` }} onClick={this.handleOpen}>
+          <div style={{...spoilerStyle, width: `${width}px`, height: `${height}px` }} className='media-spoiler' onClick={this.handleVisibility}>
             {spoilerButton}
             <span style={spoilerSpanStyle}><FormattedMessage id='status.media_hidden' defaultMessage='Media hidden' /></span>
             <span style={spoilerSubSpanStyle}><FormattedMessage id='status.sensitive_toggle' defaultMessage='Click to view' /></span>
@@ -139,7 +189,7 @@ const VideoPlayer = React.createClass({
       }
     }
 
-    if (this.state.preview) {
+    if (this.state.preview && !autoplay) {
       return (
         <div style={{ cursor: 'pointer', position: 'relative', marginTop: '8px', width: `${width}px`, height: `${height}px`, background: `url(${media.get('preview_url')}) no-repeat center`, backgroundSize: 'cover' }} onClick={this.handleOpen}>
           {spoilerButton}
@@ -151,8 +201,8 @@ const VideoPlayer = React.createClass({
     return (
       <div style={{ cursor: 'default', marginTop: '8px', overflow: 'hidden', width: `${width}px`, height: `${height}px`, boxSizing: 'border-box', background: '#000', position: 'relative' }}>
         {spoilerButton}
-        <div style={muteStyle}><IconButton title={intl.formatMessage(messages.toggle_sound)} icon={this.state.muted ? 'volume-off' : 'volume-up'} onClick={this.handleClick} /></div>
-        <video src={media.get('url')} autoPlay='true' loop={true} muted={this.state.muted} style={videoStyle} onClick={this.handleVideoClick} />
+        {muteButton}
+        <video ref={this.setRef} src={media.get('url')} autoPlay={!isIOS()} loop={true} muted={this.state.muted} style={videoStyle} onClick={this.handleVideoClick} />
       </div>
     );
   }

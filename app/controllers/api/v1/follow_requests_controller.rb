@@ -9,7 +9,7 @@ class Api::V1::FollowRequestsController < ApiController
     accounts  = Account.where(id: results.map(&:account_id)).map { |a| [a.id, a] }.to_h
     @accounts = results.map { |f| accounts[f.account_id] }
 
-    set_account_counters_maps(@accounts)
+    # set_account_counters_maps(@accounts)
 
     next_path = api_v1_follow_requests_url(max_id: results.last.id)    if results.size == DEFAULT_ACCOUNTS_LIMIT
     prev_path = api_v1_follow_requests_url(since_id: results.first.id) unless results.empty?
@@ -18,12 +18,12 @@ class Api::V1::FollowRequestsController < ApiController
   end
 
   def authorize
-    FollowRequest.find_by!(account_id: params[:id], target_account: current_account).authorize!
+    AuthorizeFollowService.new.call(Account.find(params[:id]), current_account)
     render_empty
   end
 
   def reject
-    FollowRequest.find_by!(account_id: params[:id], target_account: current_account).reject!
+    RejectFollowService.new.call(Account.find(params[:id]), current_account)
     render_empty
   end
 end

@@ -5,15 +5,15 @@ class ProcessFeedService < BaseService
     xml = Nokogiri::XML(body)
     xml.encoding = 'utf-8'
 
-    update_author(xml, account)
+    update_author(body, xml, account)
     process_entries(xml, account)
   end
 
   private
 
-  def update_author(xml, account)
+  def update_author(body, xml, account)
     return if xml.at_xpath('/xmlns:feed', xmlns: TagManager::XMLNS).nil?
-    UpdateRemoteProfileService.new.call(xml.at_xpath('/xmlns:feed', xmlns: TagManager::XMLNS), account, true)
+    RemoteProfileUpdateWorker.perform_async(account.id, body.force_encoding('UTF-8'), true)
   end
 
   def process_entries(xml, account)
@@ -61,10 +61,23 @@ class ProcessFeedService < BaseService
 
       status.save!
 
-      NotifyService.new.call(status.reblog.account, status) if status.reblog? && status.reblog.account.local?
+      notify_about_mentions!(status) unless status.reblog?
+      notify_about_reblog!(status) if status.reblog? && status.reblog.account.local?
       Rails.logger.debug "Queuing remote status #{status.id} (#{id}) for distribution"
       DistributionWorker.perform_async(status.id)
       status
+    end
+
+    def notify_about_mentions!(status)
+      status.mentions.includes(:account).each do |mention|
+        mentioned_account = mention.account
+        next unless mentioned_account.local?
+        NotifyService.new.call(mentioned_account, mention)
+      end
+    end
+
+    def notify_about_reblog!(status)
+      NotifyService.new.call(status.reblog.account, status)
     end
 
     def delete_status
@@ -105,7 +118,9 @@ class ProcessFeedService < BaseService
         account: account,
         text: content(entry),
         spoiler_text: content_warning(entry),
-        created_at: published(entry)
+        created_at: published(entry),
+        reply: thread?(entry),
+        visibility: visibility_scope(entry)
       )
 
       if thread?(entry)
@@ -143,15 +158,9 @@ class ProcessFeedService < BaseService
 
     def mentions_from_xml(parent, xml)
       processed_account_ids = []
-      public_visibility     = false
 
       xml.xpath('./xmlns:link[@rel="mentioned"]', xmlns: TagManager::XMLNS).each do |link|
-        if link['ostatus:object-type'] == TagManager::TYPES[:collection] && link['href'] == TagManager::COLLECTIONS[:public]
-          public_visibility = true
-          next
-        elsif link['ostatus:object-type'] == TagManager::TYPES[:group]
-          next
-        end
+        next if [TagManager::TYPES[:group], TagManager::TYPES[:collection]].include? link['ostatus:object-type']
 
         url = Addressable::URI.parse(link['href'])
 
@@ -163,17 +172,11 @@ class ProcessFeedService < BaseService
 
         next if mentioned_account.nil? || processed_account_ids.include?(mentioned_account.id)
 
-        mention = mentioned_account.mentions.where(status: parent).first_or_create(status: parent)
-
-        # Notify local user
-        NotifyService.new.call(mentioned_account, mention) if mentioned_account.local?
+        mentioned_account.mentions.where(status: parent).first_or_create(status: parent)
 
         # So we can skip duplicate mentions
         processed_account_ids << mentioned_account.id
       end
-
-      parent.visibility = public_visibility ? :public : :unlisted
-      parent.save!
     end
 
     def hashtags_from_xml(parent, xml)
@@ -188,6 +191,9 @@ class ProcessFeedService < BaseService
         next unless link['href']
 
         media = MediaAttachment.where(status: parent, remote_url: link['href']).first_or_initialize(account: parent.account, status: parent, remote_url: link['href'])
+        parsed_url = URI.parse(link['href'])
+
+        next if !%w(http https).include?(parsed_url.scheme) || parsed_url.host.empty?
 
         begin
           media.file_remote_url = link['href']
@@ -227,6 +233,10 @@ class ProcessFeedService < BaseService
 
     def content_warning(xml = @xml)
       xml.at_xpath('./xmlns:summary', xmlns: TagManager::XMLNS)&.content || ''
+    end
+
+    def visibility_scope(xml = @xml)
+      xml.at_xpath('./mastodon:scope', mastodon: TagManager::MTDN_XMLNS)&.content&.to_sym || :public
     end
 
     def published(xml = @xml)

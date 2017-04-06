@@ -6,33 +6,22 @@ RSpec.describe Follow, type: :model do
 
   subject { Follow.new(account: alice, target_account: bob) }
 
-  describe '#verb' do
-    it 'is follow' do
-      expect(subject.verb).to be :follow
+  describe 'validations' do
+    it 'has a valid fabricator' do
+      follow = Fabricate.build(:follow)
+      expect(follow).to be_valid
     end
-  end
 
-  describe '#title' do
-    it 'describes the follow' do
-      expect(subject.title).to eql 'alice started following bob'
+    it 'is invalid without an account' do
+      follow = Fabricate.build(:follow, account: nil)
+      follow.valid?
+      expect(follow).to model_have_error_on_field(:account)
     end
-  end
 
-  describe '#content' do
-    it 'is the same as the title' do
-      expect(subject.content).to eql subject.title
-    end
-  end
-
-  describe '#object_type' do
-    it 'is a person' do
-      expect(subject.object_type).to be :person
-    end
-  end
-
-  describe '#target' do
-    it 'is the person being followed' do
-      expect(subject.target).to eq bob
+    it 'is invalid without a target_account' do
+      follow = Fabricate.build(:follow, target_account: nil)
+      follow.valid?
+      expect(follow).to model_have_error_on_field(:target_account)
     end
   end
 end

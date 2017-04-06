@@ -256,6 +256,53 @@ button:focus {
   }
 }
 
+.compact-header {
+  h1 {
+    font-size: 24px;
+    line-height: 28px;
+    color: $color3;
+    overflow: hidden;
+    font-weight: 500;
+    margin-bottom: 20px;
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    small {
+      font-weight: 400;
+      color: $color2;
+    }
+
+    img {
+      display: inline-block;
+      margin-bottom: -5px;
+      margin-right: 15px;
+      width: 36px;
+      height: 36px;
+    }
+  }
+}
+
+.landing-strip {
+  background: rgba(darken($color1, 7%), 0.8);
+  color: $color3;
+  font-weight: 400;
+  padding: 14px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+
+  strong, a {
+    font-weight: 500;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: underline;
+  }
+}
+
 @import 'forms';
 @import 'accounts';
 @import 'stream_entries';

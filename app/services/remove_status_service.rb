@@ -1,7 +1,11 @@
 # frozen_string_literal: true
 
 class RemoveStatusService < BaseService
+  include StreamEntryRenderer
+
   def call(status)
+    @payload = Oj.dump(event: :delete, payload: status.id)
+
     remove_from_self(status) if status.account.local?
     remove_from_followers(status)
     remove_from_mentioned(status)
@@ -23,27 +27,29 @@ class RemoveStatusService < BaseService
   end
 
   def remove_from_followers(status)
-    status.account.followers.each do |follower|
-      next unless follower.local?
+    status.account.followers.where(domain: nil).each do |follower|
       unpush(:home, follower, status)
     end
   end
 
   def remove_from_mentioned(status)
+    return unless status.local?
+    notified_domains = []
+
     status.mentions.each do |mention|
       mentioned_account = mention.account
 
-      if mentioned_account.local?
-        unpush(:mentions, mentioned_account, status)
-      else
-        send_delete_salmon(mentioned_account, status)
-      end
+      next if mentioned_account.local?
+      next if notified_domains.include?(mentioned_account.domain)
+
+      notified_domains << mentioned_account.domain
+      send_delete_salmon(mentioned_account, status)
     end
   end
 
   def send_delete_salmon(account, status)
     return unless status.local?
-    NotificationWorker.perform_async(status.stream_entry.id, account.id)
+    NotificationWorker.perform_async(stream_entry_to_xml(status.stream_entry), status.account_id, account.id)
   end
 
   def remove_reblogs(status)
@@ -53,23 +59,25 @@ class RemoveStatusService < BaseService
   end
 
   def unpush(type, receiver, status)
-    if status.reblog?
+    if status.reblog? && !redis.zscore(FeedManager.instance.key(type, receiver.id), status.reblog_of_id).nil?
       redis.zadd(FeedManager.instance.key(type, receiver.id), status.reblog_of_id, status.reblog_of_id)
     else
       redis.zremrangebyscore(FeedManager.instance.key(type, receiver.id), status.id, status.id)
     end
 
-    FeedManager.instance.broadcast(receiver.id, event: 'delete', payload: status.id)
+    Redis.current.publish("timeline:#{receiver.id}", @payload)
   end
 
   def remove_from_hashtags(status)
-    status.tags.each do |tag|
-      FeedManager.instance.broadcast("hashtag:#{tag.name}", event: 'delete', payload: status.id)
+    status.tags.pluck(:name) do |hashtag|
+      Redis.current.publish("timeline:hashtag:#{hashtag}", @payload)
+      Redis.current.publish("timeline:hashtag:#{hashtag}:local", @payload) if status.local?
     end
   end
 
   def remove_from_public(status)
-    FeedManager.instance.broadcast(:public, event: 'delete', payload: status.id)
+    Redis.current.publish('timeline:public', @payload)
+    Redis.current.publish('timeline:public:local', @payload) if status.local?
   end
 
   def redis

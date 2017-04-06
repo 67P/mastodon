@@ -24,15 +24,23 @@ class ProcessInteractionService < BaseService
     return if account.suspended?
 
     if salmon.verify(envelope, account.keypair)
-      update_remote_profile_service.call(xml.at_xpath('/xmlns:entry', xmlns: TagManager::XMLNS), account, true)
+      RemoteProfileUpdateWorker.perform_async(account.id, body.force_encoding('UTF-8'), true)
 
       case verb(xml)
       when :follow
         follow!(account, target_account) unless target_account.locked? || target_account.blocking?(account)
+      when :request_friend
+        follow_request!(account, target_account) unless !target_account.locked? || target_account.blocking?(account)
+      when :authorize
+        authorize_follow_request!(account, target_account)
+      when :reject
+        reject_follow_request!(account, target_account)
       when :unfollow
         unfollow!(account, target_account)
       when :favorite
         favourite!(xml, account)
+      when :unfavorite
+        unfavourite!(xml, account)
       when :post
         add_post!(body, account) if mentions_account?(xml, target_account)
       when :share
@@ -56,7 +64,7 @@ class ProcessInteractionService < BaseService
   end
 
   def mentions_account?(xml, account)
-    xml.xpath('/xmlns:entry/xmlns:link[@rel="mentioned"]', xmlns: TagManager::XMLNS).each { |mention_link| return true if mention_link.attribute('href').value == TagManager.instance.url_for(account) }
+    xml.xpath('/xmlns:entry/xmlns:link[@rel="mentioned"]', xmlns: TagManager::XMLNS).each { |mention_link| return true if [TagManager.instance.uri_for(account), TagManager.instance.url_for(account)].include?(mention_link.attribute('href').value) }
     false
   end
 
@@ -70,6 +78,22 @@ class ProcessInteractionService < BaseService
   def follow!(account, target_account)
     follow = account.follow!(target_account)
     NotifyService.new.call(target_account, follow)
+  end
+
+  def follow_request!(account, target_account)
+    follow_request = FollowRequest.create!(account: account, target_account: target_account)
+    NotifyService.new.call(target_account, follow_request)
+  end
+
+  def authorize_follow_request!(account, target_account)
+    follow_request = FollowRequest.find_by(account: target_account, target_account: account)
+    follow_request&.authorize!
+    SubscribeService.new.call(account) unless account.subscribed?
+  end
+
+  def reject_follow_request!(account, target_account)
+    follow_request = FollowRequest.find_by(account: target_account, target_account: account)
+    follow_request&.reject!
   end
 
   def unfollow!(account, target_account)
@@ -90,7 +114,7 @@ class ProcessInteractionService < BaseService
 
     return if status.nil?
 
-    remove_status_service.call(status) if account.id == status.account_id
+    RemovalWorker.perform_async(status.id) if account.id == status.account_id
   end
 
   def favourite!(xml, from_account)
@@ -99,8 +123,14 @@ class ProcessInteractionService < BaseService
     NotifyService.new.call(current_status.account, favourite)
   end
 
+  def unfavourite!(xml, from_account)
+    current_status = status(xml)
+    favourite = current_status.favourites.where(account: from_account).first
+    favourite&.destroy
+  end
+
   def add_post!(body, account)
-    process_feed_service.call(body, account)
+    ProcessingWorker.perform_async(account.id, body.force_encoding('UTF-8'))
   end
 
   def status(xml)
@@ -121,10 +151,6 @@ class ProcessInteractionService < BaseService
 
   def process_feed_service
     @process_feed_service ||= ProcessFeedService.new
-  end
-
-  def update_remote_profile_service
-    @update_remote_profile_service ||= UpdateRemoteProfileService.new
   end
 
   def remove_status_service

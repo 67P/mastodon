@@ -2,36 +2,13 @@
 
 class Favourite < ApplicationRecord
   include Paginable
-  include Streamable
 
   belongs_to :account, inverse_of: :favourites
-  belongs_to :status,  inverse_of: :favourites
+  belongs_to :status,  inverse_of: :favourites, counter_cache: true
 
   has_one :notification, as: :activity, dependent: :destroy
 
   validates :status_id, uniqueness: { scope: :account_id }
-
-  def verb
-    :favorite
-  end
-
-  def title
-    "#{account.acct} favourited a status by #{status.account.acct}"
-  end
-
-  delegate :object_type, to: :target
-
-  def thread
-    status
-  end
-
-  def target
-    thread
-  end
-
-  def hidden?
-    status.private_visibility?
-  end
 
   before_validation do
     self.status = status.reblog if status.reblog?

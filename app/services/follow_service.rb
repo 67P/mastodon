@@ -1,14 +1,16 @@
 # frozen_string_literal: true
 
 class FollowService < BaseService
+  include StreamEntryRenderer
+
   # Follow a remote user, notify remote user about the follow
   # @param [Account] source_account From which to follow
   # @param [String] uri User URI to follow in the form of username@domain
   def call(source_account, uri)
-    target_account = follow_remote_account_service.call(uri)
+    target_account = FollowRemoteAccountService.new.call(uri)
 
     raise ActiveRecord::RecordNotFound if target_account.nil? || target_account.id == source_account.id || target_account.suspended?
-    raise Mastodon::NotPermitted       if target_account.blocking?(source_account)
+    raise Mastodon::NotPermittedError       if target_account.blocking?(source_account) || source_account.blocking?(target_account)
 
     if target_account.locked?
       request_follow(source_account, target_account)
@@ -20,10 +22,14 @@ class FollowService < BaseService
   private
 
   def request_follow(source_account, target_account)
-    return unless target_account.local?
-
     follow_request = FollowRequest.create!(account: source_account, target_account: target_account)
-    NotifyService.new.call(target_account, follow_request)
+
+    if target_account.local?
+      NotifyService.new.call(target_account, follow_request)
+    else
+      NotificationWorker.perform_async(build_follow_request_xml(follow_request), source_account.id, target_account.id)
+      AfterRemoteFollowRequestWorker.perform_async(follow_request.id)
+    end
 
     follow_request
   end
@@ -34,12 +40,12 @@ class FollowService < BaseService
     if target_account.local?
       NotifyService.new.call(target_account, follow)
     else
-      subscribe_service.call(target_account)
-      NotificationWorker.perform_async(follow.stream_entry.id, target_account.id)
+      SubscribeService.new.call(target_account) unless target_account.subscribed?
+      NotificationWorker.perform_async(build_follow_xml(follow), source_account.id, target_account.id)
+      AfterRemoteFollowWorker.perform_async(follow.id)
     end
 
     MergeWorker.perform_async(target_account.id, source_account.id)
-    Pubsubhubbub::DistributionWorker.perform_async(follow.stream_entry.id)
 
     follow
   end
@@ -48,11 +54,49 @@ class FollowService < BaseService
     Redis.current
   end
 
-  def follow_remote_account_service
-    @follow_remote_account_service ||= FollowRemoteAccountService.new
+  def build_follow_request_xml(follow_request)
+    description = "#{follow_request.account.acct} requested to follow #{follow_request.target_account.acct}"
+
+    Nokogiri::XML::Builder.new do |xml|
+      entry(xml, true) do
+        unique_id xml, follow_request.created_at, follow_request.id, 'FollowRequest'
+        title xml, description
+        content xml, description
+
+        author(xml) do
+          include_author xml, follow_request.account
+        end
+
+        object_type xml, :activity
+        verb xml, :request_friend
+
+        target(xml) do
+          include_author xml, follow_request.target_account
+        end
+      end
+    end.to_xml
   end
 
-  def subscribe_service
-    @subscribe_service ||= SubscribeService.new
+  def build_follow_xml(follow)
+    description = "#{follow.account.acct} started following #{follow.target_account.acct}"
+
+    Nokogiri::XML::Builder.new do |xml|
+      entry(xml, true) do
+        unique_id xml, follow.created_at, follow.id, 'Follow'
+        title xml, description
+        content xml, description
+
+        author(xml) do
+          include_author xml, follow.account
+        end
+
+        object_type xml, :activity
+        verb xml, :follow
+
+        target(xml) do
+          include_author xml, follow.target_account
+        end
+      end
+    end.to_xml
   end
 end

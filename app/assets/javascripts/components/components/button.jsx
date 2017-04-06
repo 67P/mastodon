@@ -3,12 +3,13 @@ import PureRenderMixin from 'react-addons-pure-render-mixin';
 const Button = React.createClass({
 
   propTypes: {
-    text: React.PropTypes.string,
+    text: React.PropTypes.node,
     onClick: React.PropTypes.func,
     disabled: React.PropTypes.bool,
     block: React.PropTypes.bool,
     secondary: React.PropTypes.bool,
     size: React.PropTypes.number,
+    children: React.PropTypes.node
   },
 
   getDefaultProps () {
@@ -34,11 +35,9 @@ const Button = React.createClass({
       boxSizing: 'border-box',
       textAlign: 'center',
       border: '10px none',
-      color: '#fff',
       fontSize: '14px',
       fontWeight: '500',
       letterSpacing: '0',
-      textTransform: 'uppercase',
       padding: `0 ${this.props.size / 2.25}px`,
       height: `${this.props.size}px`,
       cursor: 'pointer',

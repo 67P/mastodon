@@ -90,6 +90,10 @@ module AtomBuilderHelper
     xml.link(rel: 'self', type: 'application/atom+xml', href: url)
   end
 
+  def link_next(xml, url)
+    xml.link(rel: 'next', type: 'application/atom+xml', href: url)
+  end
+
   def link_hub(xml, url)
     xml.link(rel: 'hub', href: url)
   end
@@ -120,6 +124,10 @@ module AtomBuilderHelper
     single_link_avatar(xml, account, :original, 120)
   end
 
+  def link_header(xml, account)
+    xml.link('rel' => 'header', 'type' => account.header_content_type, 'media:width' => 700, 'media:height' => 335, 'href' => full_asset_url(account.header.url(:original)))
+  end
+
   def logo(xml, url)
     xml.logo url
   end
@@ -143,7 +151,12 @@ module AtomBuilderHelper
     xml.link(:rel => 'mentioned', :href => TagManager::COLLECTIONS[:public], 'ostatus:object-type' => TagManager::TYPES[:collection])
   end
 
+  def privacy_scope(xml, level)
+    xml['mastodon'].scope(level)
+  end
+
   def include_author(xml, account)
+    simple_id        xml, TagManager.instance.uri_for(account)
     object_type      xml, :person
     uri              xml, TagManager.instance.uri_for(account)
     name             xml, account.username
@@ -151,7 +164,9 @@ module AtomBuilderHelper
     summary          xml, account.note
     link_alternate   xml, TagManager.instance.url_for(account)
     link_avatar      xml, account
+    link_header      xml, account
     portable_contact xml, account
+    privacy_scope    xml, account.locked? ? :private : :public
   end
 
   def rich_content(xml, activity)
@@ -160,6 +175,52 @@ module AtomBuilderHelper
     else
       content xml, conditionally_formatted(activity)
     end
+  end
+
+  def include_target(xml, target)
+    simple_id xml, TagManager.instance.uri_for(target)
+
+    if target.object_type == :person
+      include_author xml, target
+    else
+      object_type    xml, target.object_type
+      verb           xml, target.verb
+      title          xml, target.title
+      link_alternate xml, TagManager.instance.url_for(target)
+    end
+
+    # Statuses have content and author
+    return unless target.is_a?(Status)
+
+    rich_content xml, target
+    verb         xml, target.verb
+    published_at xml, target.created_at
+    updated_at   xml, target.updated_at
+
+    author(xml) do
+      include_author xml, target.account
+    end
+
+    if target.reply?
+      in_reply_to xml, TagManager.instance.uri_for(target.thread), TagManager.instance.url_for(target.thread)
+    end
+
+    link_visibility xml, target
+
+    target.mentions.each do |mention|
+      link_mention xml, mention.account
+    end
+
+    target.media_attachments.each do |media|
+      link_enclosure xml, media
+    end
+
+    target.tags.each do |tag|
+      category xml, tag.name
+    end
+
+    category(xml, 'nsfw') if target.sensitive?
+    privacy_scope(xml, target.visibility)
   end
 
   def include_entry(xml, stream_entry)
@@ -180,43 +241,7 @@ module AtomBuilderHelper
 
     if stream_entry.targeted?
       target(xml) do
-        simple_id xml, TagManager.instance.uri_for(stream_entry.target)
-
-        if stream_entry.target.object_type == :person
-          include_author xml, stream_entry.target
-        else
-          object_type    xml, stream_entry.target.object_type
-          title          xml, stream_entry.target.title
-          link_alternate xml, TagManager.instance.url_for(stream_entry.target)
-        end
-
-        # Statuses have content and author
-        if stream_entry.target.is_a?(Status)
-          content      xml, conditionally_formatted(stream_entry.target)
-          verb         xml, stream_entry.target.verb
-          published_at xml, stream_entry.target.created_at
-          updated_at   xml, stream_entry.target.updated_at
-
-          author(xml) do
-            include_author xml, stream_entry.target.account
-          end
-
-          link_visibility xml, stream_entry.target
-
-          stream_entry.target.mentions.each do |mention|
-            link_mention xml, mention.account
-          end
-
-          stream_entry.target.media_attachments.each do |media|
-            link_enclosure xml, media
-          end
-
-          stream_entry.target.tags.each do |tag|
-            category xml, tag.name
-          end
-
-          category(xml, 'nsfw') if stream_entry.target.sensitive?
-        end
+        include_target(xml, stream_entry.target)
       end
     end
 
@@ -237,6 +262,7 @@ module AtomBuilderHelper
     end
 
     category(xml, 'nsfw') if stream_entry.activity.sensitive?
+    privacy_scope(xml, stream_entry.activity.visibility)
   end
 
   private
@@ -249,10 +275,11 @@ module AtomBuilderHelper
                'xmlns:poco'     => TagManager::POCO_XMLNS,
                'xmlns:media'    => TagManager::MEDIA_XMLNS,
                'xmlns:ostatus'  => TagManager::OS_XMLNS,
+               'xmlns:mastodon' => TagManager::MTDN_XMLNS,
              }, &block)
   end
 
   def single_link_avatar(xml, account, size, px)
-    xml.link('rel' => 'avatar', 'type' => account.avatar_content_type, 'media:width' => px, 'media:height' => px, 'href' => full_asset_url(account.avatar.url(size, false)))
+    xml.link('rel' => 'avatar', 'type' => account.avatar_content_type, 'media:width' => px, 'media:height' => px, 'href' => full_asset_url(account.avatar.url(size)))
   end
 end

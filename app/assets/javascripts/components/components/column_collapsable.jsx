@@ -7,7 +7,8 @@ const iconStyle = {
   position: 'absolute',
   right: '0',
   top: '-48px',
-  cursor: 'pointer'
+  cursor: 'pointer',
+  zIndex: '3'
 };
 
 const ColumnCollapsable = React.createClass({
@@ -40,10 +41,11 @@ const ColumnCollapsable = React.createClass({
   render () {
     const { icon, fullHeight, children } = this.props;
     const { collapsed } = this.state;
+    const collapsedClassName = collapsed ? 'collapsable-collapsed' : 'collapsable';
 
     return (
       <div style={{ position: 'relative' }}>
-        <div style={{...iconStyle, color: collapsed ? '#9baec8' : '#fff', background: collapsed ? '#2f3441' : '#373b4a' }} onClick={this.handleToggleCollapsed}><i className={`fa fa-${icon}`} /></div>
+        <div style={{...iconStyle }} className={`column-icon ${collapsedClassName}`} onClick={this.handleToggleCollapsed}><i className={`fa fa-${icon}`} /></div>
 
         <Motion defaultStyle={{ opacity: 0, height: 0 }} style={{ opacity: spring(collapsed ? 0 : 100), height: spring(collapsed ? 0 : fullHeight, collapsed ? undefined : { stiffness: 150, damping: 9 }) }}>
           {({ opacity, height }) =>
